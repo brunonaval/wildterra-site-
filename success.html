@@ -14,11 +14,16 @@
     input { padding: 10px; border-radius: 10px; border: 1px solid #ccc; width: 360px; max-width: 100%; }
     .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
     .muted { color: #666; }
+    .warn { color: #8a5a00; font-weight: 700; }
   </style>
 </head>
 <body>
   <h1>✅ Payment confirmed</h1>
-  <p class="muted">This page retrieves your license key from the payment session.</p>
+
+  <p class="muted">
+    This page retrieves your license key. <br/>
+    <span class="warn">Important:</span> Your license will be activated (locked to a device) when you run the bot on your PC — not here.
+  </p>
 
   <div class="card" id="statusCard">
     <div id="statusLine">Loading...</div>
@@ -29,9 +34,8 @@
     <pre id="licenseKeyBox"></pre>
     <div class="row">
       <button id="copyBtn">Copy</button>
-      <button id="verifyBtn">Verify now</button>
     </div>
-    <p class="muted" id="verifyResult"></p>
+    <p class="muted" id="licenseMeta"></p>
   </div>
 
   <div class="card" id="recoverCard">
@@ -51,28 +55,25 @@
       return new URLSearchParams(window.location.search).get(name);
     }
 
-    // 7.2.1 — Gera 1 deviceId e guarda no localStorage (não muda a cada clique)
-    function getOrCreateDeviceId() {
-      const key = "wt_device_id"; // pode manter esse nome
-      let id = localStorage.getItem(key);
-      if (id) return id;
-
-      if (window.crypto && crypto.randomUUID) {
-        id = crypto.randomUUID();
-      } else {
-        // fallback simples caso randomUUID não exista
-        id = "dev-" + Math.random().toString(16).slice(2) + Date.now().toString(16);
-      }
-
-      localStorage.setItem(key, id);
-      return id;
-    }
-
     let currentLicenseKey = null;
 
     function showStatus(msg, ok) {
       const el = document.getElementById("statusLine");
       el.innerHTML = ok ? `<span class="ok">${msg}</span>` : `<span class="bad">${msg}</span>`;
+    }
+
+    function renderLicense(data) {
+      currentLicenseKey = data.licenseKey;
+
+      document.getElementById("licenseKeyBox").textContent = data.licenseKey;
+      document.getElementById("licenseCard").style.display = "block";
+
+      const meta = [];
+      if (data.status) meta.push(`Status: ${data.status}`);
+      if (data.validUntilUtc) meta.push(`Valid until (UTC): ${data.validUntilUtc}`);
+      document.getElementById("licenseMeta").textContent = meta.join(" • ");
+
+      showStatus("License retrieved successfully.", true);
     }
 
     async function loadBySession() {
@@ -92,11 +93,7 @@
         }
 
         const data = await r.json();
-        currentLicenseKey = data.licenseKey;
-
-        document.getElementById("licenseKeyBox").textContent = data.licenseKey;
-        document.getElementById("licenseCard").style.display = "block";
-        showStatus("License retrieved successfully.", true);
+        renderLicense(data);
 
       } catch (e) {
         console.error(e);
@@ -132,47 +129,8 @@
           return;
         }
 
-        currentLicenseKey = data.licenseKey;
-        document.getElementById("licenseKeyBox").textContent = data.licenseKey;
-        document.getElementById("licenseCard").style.display = "block";
+        renderLicense(data);
         out.textContent = "Recovered! Your license is shown above.";
-        showStatus("License recovered successfully.", true);
-
-      } catch (e) {
-        console.error(e);
-        out.textContent = "Network error.";
-      }
-    }
-
-    // 7.2.2 — Verify SEMPRE usando o mesmo deviceId do localStorage
-    async function verifyNow() {
-      const out = document.getElementById("verifyResult");
-      if (!currentLicenseKey) {
-        out.textContent = "No license key loaded yet.";
-        return;
-      }
-
-      out.textContent = "Verifying...";
-
-      try {
-        const deviceId = getOrCreateDeviceId();
-        console.log("[WildTerra] deviceId:", deviceId);
-
-        const r = await fetch(`${API}/license/verify`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            licenseKey: currentLicenseKey,
-            deviceId: deviceId,
-            app: "wildterra-site",
-            ver: "1.0.0"
-          })
-        });
-
-        const data = await r.json();
-        out.textContent = data.active
-          ? `✅ OK (valid until ${data.validUntilUtc})`
-          : `❌ ${data.message} (valid until ${data.validUntilUtc ?? "n/a"})`;
 
       } catch (e) {
         console.error(e);
@@ -181,7 +139,6 @@
     }
 
     document.getElementById("recoverBtn").addEventListener("click", recoverByEmail);
-    document.getElementById("verifyBtn").addEventListener("click", verifyNow);
 
     document.getElementById("copyBtn").addEventListener("click", async () => {
       if (!currentLicenseKey) return;
