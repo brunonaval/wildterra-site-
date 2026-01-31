@@ -1,0 +1,183 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>WildTerra Bot — License</title>
+  <style>
+    body { font-family: Arial, sans-serif; margin: 40px; max-width: 820px; }
+    .card { border: 1px solid #ddd; border-radius: 12px; padding: 18px; margin: 14px 0; }
+    .ok { color: #0a7a0a; font-weight: 700; }
+    .bad { color: #b00020; font-weight: 700; }
+    code, pre { background: #f6f6f6; padding: 10px; border-radius: 10px; display: block; overflow:auto; }
+    button { padding: 10px 14px; border-radius: 10px; border: 1px solid #ccc; cursor: pointer; }
+    input { padding: 10px; border-radius: 10px; border: 1px solid #ccc; width: 360px; max-width: 100%; }
+    .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  <h1>✅ Payment confirmed</h1>
+  <p class="muted">This page retrieves your license key from the payment session.</p>
+
+  <div class="card" id="statusCard">
+    <div id="statusLine">Loading...</div>
+  </div>
+
+  <div class="card" id="licenseCard" style="display:none;">
+    <h2>Your License Key</h2>
+    <pre id="licenseKeyBox"></pre>
+    <div class="row">
+      <button id="copyBtn">Copy</button>
+      <button id="verifyBtn">Verify now</button>
+    </div>
+    <p class="muted" id="verifyResult"></p>
+  </div>
+
+  <div class="card" id="recoverCard">
+    <h2>Didn’t get your key?</h2>
+    <p class="muted">Enter the email used at checkout and recover your license.</p>
+    <div class="row">
+      <input id="emailInput" type="email" placeholder="you@example.com" />
+      <button id="recoverBtn">Recover</button>
+    </div>
+    <p class="muted" id="recoverResult"></p>
+  </div>
+
+  <script>
+    const API = "https://wildterralicensing.onrender.com";
+
+    function qs(name) {
+      return new URLSearchParams(window.location.search).get(name);
+    }
+
+    function getDeviceId() {
+      let id = localStorage.getItem("wt_device_id");
+      if (!id) {
+        id = crypto.randomUUID();
+        localStorage.setItem("wt_device_id", id);
+      }
+      return id;
+    }
+
+    let currentLicenseKey = null;
+
+    function showStatus(msg, ok) {
+      const el = document.getElementById("statusLine");
+      el.innerHTML = ok ? `<span class="ok">${msg}</span>` : `<span class="bad">${msg}</span>`;
+    }
+
+    async function loadBySession() {
+      const sessionId = qs("session_id");
+      if (!sessionId) {
+        showStatus("Missing session_id in URL. Use Recover by email below.", false);
+        return;
+      }
+
+      try {
+        const r = await fetch(`${API}/license/by-session?session_id=${encodeURIComponent(sessionId)}`);
+        if (!r.ok) {
+          const t = await r.text();
+          showStatus(`Session lookup failed (${r.status}). You can recover by email below.`, false);
+          console.error(t);
+          return;
+        }
+
+        const data = await r.json();
+        currentLicenseKey = data.licenseKey;
+
+        document.getElementById("licenseKeyBox").textContent = data.licenseKey;
+        document.getElementById("licenseCard").style.display = "block";
+        showStatus("License retrieved successfully.", true);
+
+      } catch (e) {
+        console.error(e);
+        showStatus("Network error while retrieving license. Try Recover by email.", false);
+      }
+    }
+
+    async function recoverByEmail() {
+      const email = document.getElementById("emailInput").value.trim();
+      const out = document.getElementById("recoverResult");
+
+      if (!email) {
+        out.textContent = "Type an email first.";
+        return;
+      }
+
+      out.textContent = "Recovering...";
+
+      try {
+        const r = await fetch(`${API}/license/recover`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email })
+        });
+
+        const txt = await r.text();
+        let data;
+        try { data = JSON.parse(txt); } catch { data = { raw: txt }; }
+
+        if (!r.ok) {
+          out.textContent = `Recover failed (${r.status}).`;
+          console.error(data);
+          return;
+        }
+
+        currentLicenseKey = data.licenseKey;
+        document.getElementById("licenseKeyBox").textContent = data.licenseKey;
+        document.getElementById("licenseCard").style.display = "block";
+        out.textContent = "Recovered! Your license is shown above.";
+        showStatus("License recovered successfully.", true);
+
+      } catch (e) {
+        console.error(e);
+        out.textContent = "Network error.";
+      }
+    }
+
+    async function verifyNow() {
+      const out = document.getElementById("verifyResult");
+      if (!currentLicenseKey) {
+        out.textContent = "No license key loaded yet.";
+        return;
+      }
+
+      out.textContent = "Verifying...";
+
+      try {
+        const r = await fetch(`${API}/license/verify`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            licenseKey: currentLicenseKey,
+            deviceId: getDeviceId(),
+            app: "wildterra-site",
+            ver: "1.0.0"
+          })
+        });
+
+        const data = await r.json();
+        out.textContent = data.active
+          ? `✅ OK (valid until ${data.validUntilUtc})`
+          : `❌ ${data.message} (valid until ${data.validUntilUtc ?? "n/a"})`;
+
+      } catch (e) {
+        console.error(e);
+        out.textContent = "Network error.";
+      }
+    }
+
+    document.getElementById("recoverBtn").addEventListener("click", recoverByEmail);
+    document.getElementById("verifyBtn").addEventListener("click", verifyNow);
+
+    document.getElementById("copyBtn").addEventListener("click", async () => {
+      if (!currentLicenseKey) return;
+      await navigator.clipboard.writeText(currentLicenseKey);
+      alert("Copied!");
+    });
+
+    loadBySession();
+  </script>
+</body>
+</html>
